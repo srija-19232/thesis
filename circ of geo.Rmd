@@ -1,0 +1,127 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+circ1 <- getGEO("GSE101586")
+circ2 <- getGEO("GSE112214")
+matrix1 <- data.frame(exprs(circ1[[1]]))
+matrix2 <- data.frame(exprs(circ2[[1]]))
+mat <- merge(matrix1,matrix2, by = "row.names")
+rownames(mat) <- mat$Row.names
+df <- subset(mat, select = -c(Row.names))
+mat1 <- log2(df)	
+sample1 <- c("sample1","sample2","sample3","sample4","sample5","sample6","sample7","sample8","sample9","sample10","sample11","sample12","sample13","sample14","sample15","sample16")
+sample <- c("GSM2706423","GSM2706424","GSM2706425","GSM2706426","GSM2706427","GSM2706428","GSM2706429","GSM2706430","GSM2706431","GSM2706432","GSM3061040","GSM3061041","GSM3061042","GSM3061043","GSM3061044","GSM3061045")
+condition <- c("normal", "normal", "normal", "normal", "normal", "tumor", "tumor", "tumor", "tumor", "tumor", "normal","normal","tumor", "tumor","tumor","normal")
+ex <- c("one","one","one","one","one","one","one","one","one","one","two","two","two","two","two","two")
+batch <- c("A","A","A","A","A","A","A","A","A","A","B","B","B","B","B","B")
+pheno <- data.frame(ex, condition)
+rownames(pheno) <- sample
+metad <- data.frame(sample,batch,condition)
+modmatrix = model.matrix(~as.factor(condition), data=metad)
+norm_dat = normalizeBetweenArrays(mat1)
+mat_scaled = ComBat(dat= norm_dat, batch=batch, mod=modmatrix)
+pca<- pca(mat_scaled, metadata = pheno, removeVar = 0.1)
+jpeg("pac2.jpeg", width = 600, height=600)
+biplot(pca, x="PC1", y="PC2",
+  colby = 'condition', colkey = c('normal'='royalblue', 'tumor'='red'),
+  hline = 0.1, vline = 0.1,
+  shape = 'ex', shapekey = c('one' = 15, 'two' =17),
+  legendPosition = 'right', legendLabSize = 12, legendIconSize = 8.0,
+  drawConnectors = TRUE,
+  title = 'PCA bi-plot',
+  subtitle = 'PC1 versus PC2')
+dev.off
+dfc <- data.frame(mat_scaled)
+# fold change function
+ Fold_Change <- function(ratio){
+   if(ratio < 1){
+     FC <- -1/ratio
+  } else{
+     FC <- ratio
+   }
+   return(FC)
+ }
+ for(i in 1:nrow(dfc)){
+   row <- dfc[i,]
+   control <- as.numeric(row[,c(1,2,3,4,5,11,12,16)])
+   case <- as.numeric(row[,c(6,7,8,9,10,13,14,15)])
+   t.test_case <- t.test(case, control, paired=T)
+    case_p.val <- t.test_case$p.value
+  case_ratio <- 2^((mean(case))-(mean(control)))
+   dfc$Case_FC[i] <- Fold_Change(case_ratio)
+   dfc$Case_pvalue[i] <- case_p.val 
+ 
+ }
+ # Calculate FDR
+ 
+ dfc$Case_FDR <- p.adjust(dfc$Case_pvalue, method = "fdr")
+filters <-  subset(dfc, Case_FC > 1.5 & Case_pvalue < 0.05) 
+filters2 <- subset(dfc, Case_FC < -1.5 & Case_pvalue < 0.05)
+as.data.frame(filters)
+as.data.frame(filters2)
+gpl96 <- getGEO(filename='GPL19978.soft')
+data2 <- Table(gpl96)
+na.omit(data2)
+data2 <- data2[!duplicated((data2$circRNA)), ]
+subset_table1 <- as.data.frame((data2)[which(data2$ID %in% rownames(filters)),])
+subset_table2 <- as.data.frame((data2)[which(data2$ID %in% rownames(filters2)),])
+rownames(subset_table1) <- subset_table1$circRNA 
+rownames(subset_table2) <- subset_table2$circRNA
+rownames(filters) <- subset_table1$circRNA
+rownames(filters2) <- subset_table2$circRNA
+library(readxl)
+esm <- read_excel("12967_2016_977_MOESM2_ESM.xlsx")
+df1 <- data.frame(esm[,1], esm[, 20:29])
+cols <- c("probe_id", "circRNA", "Alias",	"circRNA_type",	"chrom",	"strand",	"txStart",	"txEnd",	"best_transcript",	"GeneSymbol",	"Sequence")
+colnames(df1) <- cols
+na.omit(df1)
+df1 <- df1[!duplicated((df1$Alias)), ]
+final_df1 <- as.data.frame((df1)[which(df1$circRNA %in% rownames(subset_table1)),])
+final_df2 <- as.data.frame((df1)[which(df1$circRNA %in% rownames(subset_table2)),])
+row.names(df1) <- make.names(df1$circRNA, unique = T)
+setDT(filters, keep.rownames = TRUE)[]
+setDT(filters2, keep.rownames = TRUE)[]
+finalcount1 <- as.data.frame((filters)[which(filters$rn %in% rownames(df1)),])
+finalcount2 <- as.data.frame((filters2)[which(filters2$rn %in% rownames(df1)),])
+rownames(finalcount1) <- final_df1$Alias
+rownames(finalcount2) <- final_df2$Alias
+finalcount1 <- select(finalcount1, -rn)
+finalcount2 <- select(finalcount2, -rn)
+finalcount <- cbind(finalcount1,finalcount2)
+abc <- data.frame(finalcount1$rn == final_df$probe_id)
+write.csv(finalcount1, "finalcount1.xlsx")
+write.csv(finalcount2, "finalcount2.csv")
+library(readr)
+finalcount <- read_csv("finalcount1.csv")
+rownames(finalcount) <- finalcount$X1
+countsall <- select(finalcount, -c(X1, Case_FDR,Case_pvalue, Case_FC))
+as.data.frame(countsall)
+library(pheatmap)
+BiocManager::install('EnhancedVolcano')
+library(EnhancedVolcano)
+pheatmap(countsall, annotation_col = pheno, color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(100), y.axis.angle = 45, cex = 1, cellwidth = 13, cellheight = 3, fontsize = 10, fontsize_row = 4,fontsize_col = 7, filename = "heatmap1.png")
+library(readxl)
+MIRNASFINAL <- read_excel("MIRNASFINAL.xlsx")
+MIRNASFINAL <- MIRNASFINAL[!duplicated((MIRNASFINAL$mirna)), ]
+library(readr)
+circ57 <- read_csv("circ57.csv")
+rownames(circ57) <- circ57$circrna
+circ57t <- as.data.frame((finalcount)[which(finalcount$X1 %in% rownames(circ57)),])
+rownames(circ57t) <-circ57t$X1 
+circ57t <- select(circ57t, -c(X1, Case_FDR,Case_pvalue, Case_FC))
+pheatmap(circ57t, annotation_col = pheno, color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(100), y.axis.angle = 45, cex = 1, cellwidth = 13, cellheight = 5, fontsize = 10, fontsize_row = 4,fontsize_col = 7, filename = "heatmap2.jpeg")
+circ57t1 <- as.data.frame((final_df1)[which(final_df1$Alias %in% rownames(circ57)),])
+circ57t2 <- as.data.frame((final_df2)[which(final_df2$Alias %in% rownames(circ57)),])
+write.csv(circ57t, "circ57t.csv")
+write.csv(circ57t1, "circ57t1.csv")
+write.csv(circ57t2, "circ57t2.csv")
+```
+
